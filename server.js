@@ -256,23 +256,24 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
     let runningDue = 0;
 
     rows.forEach((r) => {
-      const paid = r.paid + r.autoPaid;
-      const pending = Math.max(r.premium - paid, 0);
-      runningDue += pending;
+  const paid = r.paid; // ✅ cash + online only
+  const pending = Math.max(r.premium - (r.paid + r.autoPaid), 0);
+  runningDue += pending;
 
-      doc.text(
-        r.date.toLocaleString("default", {
-          month: "long",
-          year: "numeric",
-        }),
-        40
-      );
-      doc.text(`₹${r.premium}`, 160);
-      doc.text(`₹${paid}`, 240);
-      doc.text(`₹${pending}`, 320);
-      doc.text(`₹${runningDue}`, 400);
-      doc.moveDown();
-    });
+  doc.text(
+    r.date.toLocaleString("default", {
+      month: "long",
+      year: "numeric",
+    }),
+    40
+  );
+  doc.text(`₹${r.premium}`, 160);
+  doc.text(`₹${paid}`, 240);
+  doc.text(`₹${pending}`, 320);
+  doc.text(`₹${runningDue}`, 400);
+  doc.moveDown();
+});
+
 
     doc.end();
   } catch (err) {
