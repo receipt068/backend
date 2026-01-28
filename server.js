@@ -134,142 +134,68 @@ app.get("/auctions/:group", async (req, res) => {
 
 app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
   try {
-    const { from, to } = req.query;
-
-    const parseDate = (str) => {
-      const [d, m, y] = str.split("-").map(Number);
-      return new Date(y, m - 1, d);
-    };
-
-    const monthKey = (d) => `${d.getFullYear()}-${d.getMonth()}`;
-
-    const member = await Member.findOne({
-      personMobile: req.params.mobile,
-    });
-
+    const member = await Member.findOne({ personMobile: req.params.mobile });
     if (!member) return res.status(404).send("Member not found");
 
-    const basePremium = Number(member.personPremium);
-
-    const receipts = await Receipt.find({
-      mobile: req.params.mobile,
+    const receipts = await Receipt.find({ mobile: req.params.mobile }).sort({
+      created_at: 1,
     });
 
     const auctions = await Auction.find({
       groupName: member.groupName,
-    });
+    }).sort({ auctionDate: 1 });
 
-    const ledger = {};
+    const basePremium = Number(member.personPremium);
 
-    /* ===== Auction months ===== */
+    const premiumMap = {};
     auctions.forEach((a) => {
       const d = new Date(a.auctionDate);
-      const key = monthKey(d);
-
-      ledger[key] = {
-        date: new Date(d.getFullYear(), d.getMonth(), 1),
-        premium: Number(a.perPersonFinal), // ✅ FIXED
-        winnerName: a.memberName?.trim(),
-        paid: 0,
-        autoPaid: 0,
-      };
+      premiumMap[`${d.getMonth() + 1}-${d.getFullYear()}`] =
+        Number(a.perPersonFinal || basePremium);
     });
 
-    /* ===== Payments (STRICT MONTH) ===== */
-    receipts.forEach((r) => {
-      if (!r.collectionDate) return;
+    const months = [];
+    let cursor = new Date(member.createdAt);
+    cursor.setDate(1);
 
-      const d = parseDate(r.collectionDate);
-      const key = monthKey(d);
-
-      if (!ledger[key]) {
-        ledger[key] = {
-          date: new Date(d.getFullYear(), d.getMonth(), 1),
-          premium: basePremium,
-          winnerName: null,
-          paid: 0,
-          autoPaid: 0,
-        };
-      }
-
-      ledger[key].paid +=
-        Number(r.cashAmount || 0) +
-        Number(r.onlineAmount || 0);
-    });
-
-    /* ===== AutoPaid only for winner ===== */
-    Object.values(ledger).forEach((m) => {
-      if (
-        m.winnerName &&
-        m.winnerName === member.personName.trim()
-      ) {
-        m.autoPaid = m.premium;
-      }
-    });
-
-    let rows = Object.values(ledger).sort(
-      (a, b) => a.date - b.date
-    );
-
-    if (from) rows = rows.filter((r) => r.date >= new Date(from));
-    if (to) rows = rows.filter((r) => r.date <= new Date(to));
-
-    /* ===== PDF ===== */
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", "inline");
-
-    const doc = new PDFDocument({ margin: 40 });
-    doc.pipe(res);
-
-    doc.fontSize(16).text("SRI SAI BANGARAMMA", { align: "center" });
-    doc.fontSize(12).text("LEDGER STATEMENT", { align: "center" });
-    doc.moveDown();
-
-    doc.fontSize(10);
-    doc.text(`Member : ${member.personName}`);
-    doc.text(`Group  : ${member.groupName}`);
-    doc.text(`Mobile : ${member.personMobile}`);
-    doc.text(`Premium: ₹${member.personPremium}`);
-    doc.text(`Date   : ${new Date().toLocaleDateString()}`);
-    doc.moveDown();
-
-    doc.font("Helvetica-Bold");
-    doc.text("Month", 40);
-    doc.text("Premium", 180);
-    doc.text("Paid", 260);
-    doc.text("Pending", 340);
-    doc.text("Running Due", 430);
-    doc.moveDown(0.5);
-    doc.font("Helvetica");
-
-    let runningDue = 0;
-
-    rows.forEach((r) => {
-      const paid = r.paid; // ✅ FIXED
-      const pending = Math.max(
-        r.premium - (r.paid + r.autoPaid),
-        0
-      );
-      runningDue += pending;
-
-      doc.text(
-        r.date.toLocaleString("default", {
+    while (cursor <= new Date()) {
+      const key = `${cursor.getMonth() + 1}-${cursor.getFullYear()}`;
+      months.push({
+        label: cursor.toLocaleString("default", {
           month: "long",
           year: "numeric",
         }),
-        40
-      );
-      doc.text(`₹${r.premium}`, 180);
-      doc.text(`₹${paid}`, 260);
-      doc.text(`₹${pending}`, 340);
-      doc.text(`₹${runningDue}`, 430);
-      doc.moveDown();
+        premium: premiumMap[key] || basePremium,
+        paid: 0,
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    receipts.forEach((r) => {
+      let amt = (r.cashAmount || 0) + (r.onlineAmount || 0);
+      for (let m of months) {
+        if (amt <= 0) break;
+        const bal = m.premium - m.paid;
+        if (bal > 0) {
+          const used = Math.min(bal, amt);
+          m.paid += used;
+          amt -= used;
+        }
+      }
     });
 
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "inline; filename=Ledger.pdf");
+    doc.pipe(res);
+
+    doc.font("Helvetica-Bold").fontSize(18).text("SRI SAI BANGARAMMA", {
+      align: "center",
+    });
+    doc.fontSize(13).text("LEDGER STATEMENT", { align: "center" });
     doc.end();
   } catch (err) {
-    console.error("Ledger PDF error:", err);
-    res.status(500).send("Ledger PDF failed");
+    res.status(500).send("PDF generation failed");
   }
 });
 
