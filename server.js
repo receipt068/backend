@@ -130,6 +130,8 @@ app.get("/auctions/:group", async (req, res) => {
 });
 
 /* ================= LEDGER PDF ================= */
+const PDFDocument = require("pdfkit");
+
 app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
   try {
     const { from, to } = req.query;
@@ -172,7 +174,6 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
     /* ================= LEDGER ENGINE ================= */
     const ledger = {};
 
-    // 1️⃣ Register auction months
     auctions.forEach((a) => {
       const d = new Date(a.auctionDate);
       const key = monthKey(d);
@@ -183,12 +184,9 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
         winnerName: a.memberName?.trim() || null,
         paid: 0,
         autoPaid: 0,
-        balance: 0,
-        carry: 0,
       };
     });
 
-    // 2️⃣ Apply payments (STRICT month only)
     payments.forEach((p) => {
       if (!p.date) return;
 
@@ -201,81 +199,88 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
           winnerName: null,
           paid: 0,
           autoPaid: 0,
-          balance: 0,
-          carry: 0,
         };
       }
 
       ledger[key].paid += p.amount;
     });
 
-    // 3️⃣ Month settlement
-    Object.keys(ledger)
-      .sort()
-      .forEach((key) => {
-        const m = ledger[key];
+    Object.values(ledger).forEach((m) => {
+      const isWinner =
+        m.winnerName &&
+        member.personName &&
+        m.winnerName === member.personName.trim();
 
-        const isWinner =
-          m.winnerName &&
-          member.personName &&
-          m.winnerName === member.personName.trim();
+      m.autoPaid = isWinner ? m.premium : 0;
+    });
 
-        // ✅ Auto-paid only for winner
-        m.autoPaid = isWinner ? m.premium : 0;
-
-        const totalPaid = m.paid + m.autoPaid;
-
-        m.balance = totalPaid - m.premium;
-
-        // ✅ ONLY credit carries forward
-        m.carry = Math.max(0, m.balance);
-      });
-
-    /* ================= DATE FILTER ================= */
     let rows = Object.values(ledger).sort(
       (a, b) => a.date - b.date
     );
 
-    if (from) {
-      const f = new Date(from);
-      rows = rows.filter((r) => r.date >= f);
-    }
+    if (from) rows = rows.filter((r) => r.date >= new Date(from));
+    if (to) rows = rows.filter((r) => r.date <= new Date(to));
 
-    if (to) {
-      const t = new Date(to);
-      rows = rows.filter((r) => r.date <= t);
-    }
+    /* ================= PDF ================= */
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="ledger-${member.personMobile}.pdf"`
+    );
 
-    /* ================= PDF DATA ================= */
+    const doc = new PDFDocument({ margin: 40 });
+    doc.pipe(res);
+
+    doc.fontSize(16).text("SRI SAI BANGARAMMA", { align: "center" });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text("LEDGER STATEMENT", { align: "center" });
+    doc.moveDown();
+
+    doc.fontSize(10);
+    doc.text(`Member : ${member.personName}`);
+    doc.text(`Group  : ${member.groupName}`);
+    doc.text(`Mobile : ${member.personMobile}`);
+    doc.text(`Premium: ₹${member.personPremium}`);
+    doc.text(`Date   : ${new Date().toLocaleDateString()}`);
+    doc.moveDown();
+
+    doc.font("Helvetica-Bold");
+    doc.text("Month", 40);
+    doc.text("Premium", 160);
+    doc.text("Paid", 240);
+    doc.text("Pending", 320);
+    doc.text("Running Due", 400);
+    doc.moveDown(0.5);
+    doc.font("Helvetica");
+
     let runningDue = 0;
 
-    const tableRows = rows.map((r) => {
-      const pending = Math.max(r.premium - (r.paid + r.autoPaid), 0);
+    rows.forEach((r) => {
+      const paid = r.paid + r.autoPaid;
+      const pending = Math.max(r.premium - paid, 0);
       runningDue += pending;
 
-      return {
-        month: r.date.toLocaleString("default", {
+      doc.text(
+        r.date.toLocaleString("default", {
           month: "long",
           year: "numeric",
         }),
-        premium: r.premium,
-        paid: r.paid + r.autoPaid,
-        pending,
-        runningDue,
-      };
+        40
+      );
+      doc.text(`₹${r.premium}`, 160);
+      doc.text(`₹${paid}`, 240);
+      doc.text(`₹${pending}`, 320);
+      doc.text(`₹${runningDue}`, 400);
+      doc.moveDown();
     });
 
-    /* ================= PDF RENDER ================= */
-    res.render("ledgerPdf", {
-      member,
-      rows: tableRows,
-      generatedOn: new Date().toLocaleDateString(),
-    });
+    doc.end();
   } catch (err) {
     console.error("Ledger PDF error:", err);
-    res.status(500).send("Ledger generation failed");
+    res.status(500).send("Ledger PDF generation failed");
   }
 });
+
 
 
 
