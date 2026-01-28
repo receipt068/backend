@@ -134,202 +134,149 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
   try {
     const { from, to } = req.query;
 
+    /* ================= HELPERS ================= */
+    const parseDate = (str) => {
+      if (!str) return null;
+      const [d, m, y] = str.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    const monthKey = (d) => `${d.getFullYear()}-${d.getMonth()}`;
+
+    /* ================= MEMBER ================= */
     const member = await Member.findOne({
       personMobile: req.params.mobile,
     });
+
     if (!member) return res.status(404).send("Member not found");
-
-    const receipts = await Receipt.find({
-      mobile: req.params.mobile,
-    }).sort({ created_at: 1 });
-
-    const auctions = await Auction.find({
-      groupName: member.groupName,
-    }).sort({ auctionDate: 1 });
 
     const basePremium = Number(member.personPremium);
 
-    /* ---------- Auction Premium Map ---------- */
-    const premiumMap = {};
+    /* ================= RECEIPTS ================= */
+    const receipts = await Receipt.find({
+      mobile: req.params.mobile,
+    });
+
+    const payments = receipts.map((r) => ({
+      amount:
+        Number(r.cashAmount || 0) +
+        Number(r.onlineAmount || 0),
+      date: parseDate(r.collectionDate),
+    }));
+
+    /* ================= AUCTIONS ================= */
+    const auctions = await Auction.find({
+      groupName: member.groupName,
+    });
+
+    /* ================= LEDGER ENGINE ================= */
+    const ledger = {};
+
+    // 1️⃣ Register auction months
     auctions.forEach((a) => {
       const d = new Date(a.auctionDate);
-      premiumMap[`${d.getMonth()}-${d.getFullYear()}`] =
-        Number(a.perPersonFinal || basePremium);
+      const key = monthKey(d);
+
+      ledger[key] = {
+        date: new Date(d.getFullYear(), d.getMonth(), 1),
+        premium: Number(a.perPersonFinal || basePremium),
+        winnerName: a.memberName?.trim() || null,
+        paid: 0,
+        autoPaid: 0,
+        balance: 0,
+        carry: 0,
+      };
     });
 
-    /* ---------- Build Months ---------- */
-    const months = [];
-    let cursor = new Date(member.createdAt);
-    cursor.setDate(1);
+    // 2️⃣ Apply payments (STRICT month only)
+    payments.forEach((p) => {
+      if (!p.date) return;
 
-    const end = new Date();
+      const key = monthKey(p.date);
 
-    while (cursor <= end) {
-      const m = cursor.getMonth();
-      const y = cursor.getFullYear();
-      const key = `${m}-${y}`;
+      if (!ledger[key]) {
+        ledger[key] = {
+          date: new Date(p.date.getFullYear(), p.date.getMonth(), 1),
+          premium: basePremium,
+          winnerName: null,
+          paid: 0,
+          autoPaid: 0,
+          balance: 0,
+          carry: 0,
+        };
+      }
 
-      months.push({
-        date: new Date(cursor),
-        label: cursor.toLocaleString("default", {
-          month: "long",
-          year: "numeric",
-        }),
-        premium: premiumMap[key] || basePremium,
-        paid: 0,
+      ledger[key].paid += p.amount;
+    });
+
+    // 3️⃣ Month settlement
+    Object.keys(ledger)
+      .sort()
+      .forEach((key) => {
+        const m = ledger[key];
+
+        const isWinner =
+          m.winnerName &&
+          member.personName &&
+          m.winnerName === member.personName.trim();
+
+        // ✅ Auto-paid only for winner
+        m.autoPaid = isWinner ? m.premium : 0;
+
+        const totalPaid = m.paid + m.autoPaid;
+
+        m.balance = totalPaid - m.premium;
+
+        // ✅ ONLY credit carries forward
+        m.carry = Math.max(0, m.balance);
       });
 
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-
-    /* ---------- FIFO Payments ---------- */
-    receipts.forEach((r) => {
-      let amt = (r.cashAmount || 0) + (r.onlineAmount || 0);
-      for (let m of months) {
-        if (amt <= 0) break;
-        const bal = m.premium - m.paid;
-        if (bal > 0) {
-          const used = Math.min(bal, amt);
-          m.paid += used;
-          amt -= used;
-        }
-      }
-    });
-
-    /* ---------- Apply From / To Filter ---------- */
-    const monthIndex = (d) => d.getFullYear() * 12 + d.getMonth();
-
-    let filtered = months;
+    /* ================= DATE FILTER ================= */
+    let rows = Object.values(ledger).sort(
+      (a, b) => a.date - b.date
+    );
 
     if (from) {
       const f = new Date(from);
-      filtered = filtered.filter(
-        (m) => monthIndex(m.date) >= monthIndex(f)
-      );
+      rows = rows.filter((r) => r.date >= f);
     }
 
     if (to) {
       const t = new Date(to);
-      filtered = filtered.filter(
-        (m) => monthIndex(m.date) <= monthIndex(t)
-      );
+      rows = rows.filter((r) => r.date <= t);
     }
 
-    /* ---------- PDF ---------- */
-    const doc = new PDFDocument({ size: "A4", margin: 40 });
-
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      "inline; filename=Ledger.pdf"
-    );
-
-    doc.pipe(res);
-
-    /* ---------- Header ---------- */
-    doc.font("Helvetica-Bold").fontSize(18).text(
-      "SRI SAI BANGARAMMA",
-      { align: "center" }
-    );
-    doc.fontSize(13).text("LEDGER STATEMENT", { align: "center" });
-    doc.moveDown(1);
-
-    doc.fontSize(10).font("Helvetica");
-    doc.text(`Member : ${member.personName}`);
-    doc.text(`Group  : ${member.groupName}`);
-    doc.text(`Mobile : ${member.personMobile}`);
-    doc.text(`Premium: ₹${basePremium}`);
-    doc.text(`Date   : ${new Date().toLocaleDateString()}`);
-    doc.moveDown(1);
-
-    if (from || to) {
-      doc
-        .fontSize(9)
-        .fillColor("gray")
-        .text(
-          `Period: ${from ? new Date(from).toLocaleDateString() : "Start"} 
-           to ${to ? new Date(to).toLocaleDateString() : "Till Date"}`,
-          { align: "center" }
-        );
-      doc.moveDown(1);
-    }
-
-    /* ---------- Table Header ---------- */
-    const COL = {
-      month: 40,
-      premium: 220,
-      paid: 300,
-      pending: 380,
-      running: 460,
-    };
-
-    let y = doc.y;
-
-    doc.font("Helvetica-Bold").fontSize(10);
-    doc.text("Month", COL.month, y);
-    doc.text("Premium", COL.premium, y, { width: 70, align: "right" });
-    doc.text("Paid", COL.paid, y, { width: 70, align: "right" });
-    doc.text("Pending", COL.pending, y, { width: 70, align: "right" });
-    doc.text("Running Due", COL.running, y, {
-      width: 80,
-      align: "right",
-    });
-
-    y += 14;
-    doc.moveTo(40, y).lineTo(555, y).stroke();
-    y += 8;
-
-    /* ---------- Table Rows ---------- */
-    doc.font("Helvetica").fontSize(10);
-
+    /* ================= PDF DATA ================= */
     let runningDue = 0;
 
-    filtered.forEach((m) => {
-      const due = Math.max(m.premium - m.paid, 0);
-      runningDue += due;
+    const tableRows = rows.map((r) => {
+      const pending = Math.max(r.premium - (r.paid + r.autoPaid), 0);
+      runningDue += pending;
 
-      doc.text(m.label, COL.month, y);
-      doc.text(`₹${m.premium}`, COL.premium, y, {
-        width: 70,
-        align: "right",
-      });
-      doc.text(`₹${m.paid}`, COL.paid, y, {
-        width: 70,
-        align: "right",
-      });
-      doc.text(`₹${due}`, COL.pending, y, {
-        width: 70,
-        align: "right",
-      });
-      doc.text(`₹${runningDue}`, COL.running, y, {
-        width: 80,
-        align: "right",
-      });
-
-      y += 18;
-
-      if (y > 740) {
-        doc.addPage();
-        y = 50;
-      }
+      return {
+        month: r.date.toLocaleString("default", {
+          month: "long",
+          year: "numeric",
+        }),
+        premium: r.premium,
+        paid: r.paid + r.autoPaid,
+        pending,
+        runningDue,
+      };
     });
 
-    /* ---------- Footer ---------- */
-    doc.moveDown(2);
-    doc
-      .fontSize(9)
-      .fillColor("gray")
-      .text(
-        "This is a system generated ledger. All payments are subject to auction and carry-forward rules.",
-        { align: "center" }
-      );
-
-    doc.end();
+    /* ================= PDF RENDER ================= */
+    res.render("ledgerPdf", {
+      member,
+      rows: tableRows,
+      generatedOn: new Date().toLocaleDateString(),
+    });
   } catch (err) {
-    console.error("PDF ERROR:", err);
-    res.status(500).send("PDF generation failed");
+    console.error("Ledger PDF error:", err);
+    res.status(500).send("Ledger generation failed");
   }
 });
+
 
 
 /* ================= ADD NOTIFICATION (ADMIN) ================= */
