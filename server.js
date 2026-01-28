@@ -136,16 +136,13 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
   try {
     const { from, to } = req.query;
 
-    /* ================= HELPERS ================= */
     const parseDate = (str) => {
-      if (!str) return null;
       const [d, m, y] = str.split("-").map(Number);
       return new Date(y, m - 1, d);
     };
 
     const monthKey = (d) => `${d.getFullYear()}-${d.getMonth()}`;
 
-    /* ================= MEMBER ================= */
     const member = await Member.findOne({
       personMobile: req.params.mobile,
     });
@@ -154,47 +151,40 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
 
     const basePremium = Number(member.personPremium);
 
-    /* ================= RECEIPTS ================= */
     const receipts = await Receipt.find({
       mobile: req.params.mobile,
     });
 
-    const payments = receipts.map((r) => ({
-      amount:
-        Number(r.cashAmount || 0) +
-        Number(r.onlineAmount || 0),
-      date: parseDate(r.collectionDate),
-    }));
-
-    /* ================= AUCTIONS ================= */
     const auctions = await Auction.find({
       groupName: member.groupName,
     });
 
-    /* ================= LEDGER ENGINE ================= */
     const ledger = {};
 
+    /* ===== Auction months ===== */
     auctions.forEach((a) => {
       const d = new Date(a.auctionDate);
       const key = monthKey(d);
 
       ledger[key] = {
         date: new Date(d.getFullYear(), d.getMonth(), 1),
-        premium: Number(a.perPersonFinal || basePremium),
-        winnerName: a.memberName?.trim() || null,
+        premium: Number(a.perPersonFinal), // ✅ FIXED
+        winnerName: a.memberName?.trim(),
         paid: 0,
         autoPaid: 0,
       };
     });
 
-    payments.forEach((p) => {
-      if (!p.date) return;
+    /* ===== Payments (STRICT MONTH) ===== */
+    receipts.forEach((r) => {
+      if (!r.collectionDate) return;
 
-      const key = monthKey(p.date);
+      const d = parseDate(r.collectionDate);
+      const key = monthKey(d);
 
       if (!ledger[key]) {
         ledger[key] = {
-          date: new Date(p.date.getFullYear(), p.date.getMonth(), 1),
+          date: new Date(d.getFullYear(), d.getMonth(), 1),
           premium: basePremium,
           winnerName: null,
           paid: 0,
@@ -202,16 +192,19 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
         };
       }
 
-      ledger[key].paid += p.amount;
+      ledger[key].paid +=
+        Number(r.cashAmount || 0) +
+        Number(r.onlineAmount || 0);
     });
 
+    /* ===== AutoPaid only for winner ===== */
     Object.values(ledger).forEach((m) => {
-      const isWinner =
+      if (
         m.winnerName &&
-        member.personName &&
-        m.winnerName === member.personName.trim();
-
-      m.autoPaid = isWinner ? m.premium : 0;
+        m.winnerName === member.personName.trim()
+      ) {
+        m.autoPaid = m.premium;
+      }
     });
 
     let rows = Object.values(ledger).sort(
@@ -221,18 +214,14 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
     if (from) rows = rows.filter((r) => r.date >= new Date(from));
     if (to) rows = rows.filter((r) => r.date <= new Date(to));
 
-    /* ================= PDF ================= */
+    /* ===== PDF ===== */
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="ledger-${member.personMobile}.pdf"`
-    );
+    res.setHeader("Content-Disposition", "inline");
 
     const doc = new PDFDocument({ margin: 40 });
     doc.pipe(res);
 
     doc.fontSize(16).text("SRI SAI BANGARAMMA", { align: "center" });
-    doc.moveDown(0.5);
     doc.fontSize(12).text("LEDGER STATEMENT", { align: "center" });
     doc.moveDown();
 
@@ -246,41 +235,44 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
 
     doc.font("Helvetica-Bold");
     doc.text("Month", 40);
-    doc.text("Premium", 160);
-    doc.text("Paid", 240);
-    doc.text("Pending", 320);
-    doc.text("Running Due", 400);
+    doc.text("Premium", 180);
+    doc.text("Paid", 260);
+    doc.text("Pending", 340);
+    doc.text("Running Due", 430);
     doc.moveDown(0.5);
     doc.font("Helvetica");
 
     let runningDue = 0;
 
     rows.forEach((r) => {
-  const paid = r.paid; // ✅ cash + online only
-  const pending = Math.max(r.premium - (r.paid + r.autoPaid), 0);
-  runningDue += pending;
+      const paid = r.paid; // ✅ FIXED
+      const pending = Math.max(
+        r.premium - (r.paid + r.autoPaid),
+        0
+      );
+      runningDue += pending;
 
-  doc.text(
-    r.date.toLocaleString("default", {
-      month: "long",
-      year: "numeric",
-    }),
-    40
-  );
-  doc.text(`₹${r.premium}`, 160);
-  doc.text(`₹${paid}`, 240);
-  doc.text(`₹${pending}`, 320);
-  doc.text(`₹${runningDue}`, 400);
-  doc.moveDown();
-});
-
+      doc.text(
+        r.date.toLocaleString("default", {
+          month: "long",
+          year: "numeric",
+        }),
+        40
+      );
+      doc.text(`₹${r.premium}`, 180);
+      doc.text(`₹${paid}`, 260);
+      doc.text(`₹${pending}`, 340);
+      doc.text(`₹${runningDue}`, 430);
+      doc.moveDown();
+    });
 
     doc.end();
   } catch (err) {
     console.error("Ledger PDF error:", err);
-    res.status(500).send("Ledger PDF generation failed");
+    res.status(500).send("Ledger PDF failed");
   }
 });
+
 
 
 
