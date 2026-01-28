@@ -130,7 +130,7 @@ app.get("/auctions/:group", async (req, res) => {
 });
 
 /* ================= LEDGER PDF ================= */
-const PDFDocument = require("pdfkit");
+
 
 app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
   try {
