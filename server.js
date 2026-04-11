@@ -115,9 +115,13 @@ app.post("/login", async (req, res) => {
 
 /* ================= PAYMENTS ================= */
 app.get("/payments/:mobile", async (req, res) => {
-  const receipts = await Receipt.find({ mobile: req.params.mobile }).sort({
-    created_at: 1,
-  });
+  const { groupName } = req.query;
+
+  const receipts = await Receipt.find({
+    mobile: req.params.mobile,
+    groupName: groupName, // ✅ filter added
+  }).sort({ created_at: 1 });
+
   res.json({ success: true, payments: receipts });
 });
 
