@@ -163,57 +163,59 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
       groupName: member.groupName,
     });
 
-    const ledger = {};
+    const payments = receipts.map((r) => ({
+  amount:
+    Number(r.cashAmount || 0) +
+    Number(r.onlineAmount || 0),
 
-    /* ===== Auction months ===== */
-    auctions.forEach((a) => {
-      const d = new Date(a.auctionDate);
-      const key = monthKey(d);
+  date: parseDate(
+    r.collectionDate
+  ),
+}));
 
-      ledger[key] = {
-        date: new Date(d.getFullYear(), d.getMonth(), 1),
-        premium: Number(a.perPersonFinal), // ✅ FIXED
-        winnerName: a.memberName?.trim(),
-        paid: 0,
-        autoPaid: 0,
-      };
-    });
+const ledger = buildMonthWiseLedger({
+  payments,
+  auctions,
+  member,
+});
 
-    /* ===== Payments (STRICT MONTH) ===== */
-    receipts.forEach((r) => {
-      if (!r.collectionDate) return;
+let rows = Object.values(ledger).sort(
+  (a, b) => a.date - b.date
+);
 
-      const d = parseDate(r.collectionDate);
-      const key = monthKey(d);
+let previousBalance = 0;
 
-      if (!ledger[key]) {
-        ledger[key] = {
-          date: new Date(d.getFullYear(), d.getMonth(), 1),
-          premium: basePremium,
-          winnerName: null,
-          paid: 0,
-          autoPaid: 0,
-        };
-      }
+rows = rows.map((r) => {
+  let available =
+  Number(previousBalance || 0) +
+  Number(r.paid || 0) +
+  Number(r.autoPaid || 0);
 
-      ledger[key].paid +=
-        Number(r.cashAmount || 0) +
-        Number(r.onlineAmount || 0);
-    });
+  const balance =
+    available - r.premium;
 
-    /* ===== AutoPaid only for winner ===== */
-    Object.values(ledger).forEach((m) => {
-      if (
-        m.winnerName &&
-        m.winnerName === member.personName.trim()
-      ) {
-        m.autoPaid = m.premium;
-      }
-    });
+  const pending =
+    balance < 0
+      ? Math.abs(balance)
+      : 0;
 
-    let rows = Object.values(ledger).sort(
-      (a, b) => a.date - b.date
-    );
+  const credit =
+    balance > 0
+      ? balance
+      : 0;
+
+  previousBalance = credit;
+
+  return {
+    ...r,
+    actualPaid:
+      pending === 0
+        ? r.premium
+        : available,
+    pending,
+    credit,
+  };
+});
 
     if (from) rows = rows.filter((r) => r.date >= new Date(from));
     if (to) rows = rows.filter((r) => r.date <= new Date(to));
@@ -238,37 +240,76 @@ app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
     doc.moveDown();
 
     doc.font("Helvetica-Bold");
-    doc.text("Month", 40);
-    doc.text("Premium", 180);
-    doc.text("Paid", 260);
-    doc.text("Pending", 340);
-    doc.text("Running Due", 430);
-    doc.moveDown(0.5);
-    doc.font("Helvetica");
+    const c1 = 40;
+const c2 = 180;
+const c3 = 280;
+const c4 = 380;
+const c5 = 480;
 
-    let runningDue = 0;
+let y = doc.y;
 
-    rows.forEach((r) => {
-      const paid = r.paid; // ✅ FIXED
-      const pending = Math.max(
-        r.premium - (r.paid + r.autoPaid),
-        0
-      );
-      runningDue += pending;
+doc.text("Month", c1, y);
+doc.text("Premium", c2, y);
+doc.text("Paid", c3, y);
+doc.text("Pending", c4, y);
+doc.text("Running Due", c5, y);
 
-      doc.text(
-        r.date.toLocaleString("default", {
-          month: "long",
-          year: "numeric",
-        }),
-        40
-      );
-      doc.text(`₹${r.premium}`, 180);
-      doc.text(`₹${paid}`, 260);
-      doc.text(`₹${pending}`, 340);
-      doc.text(`₹${runningDue}`, 430);
-      doc.moveDown();
-    });
+y += 20;
+
+doc.moveTo(40, y - 5)
+  .lineTo(550, y - 5)
+  .stroke();
+
+doc.font("Helvetica");
+
+   let runningDue = 0;
+
+rows.forEach((r) => {
+  const paid = Number(r.actualPaid || 0);
+  const pending = Number(r.pending || 0);
+
+  runningDue += pending;
+
+  if (y > 740) {
+    doc.addPage();
+    y = 50;
+  }
+
+  doc.text(
+    r.date.toLocaleString("default", {
+      month: "short",
+      year: "numeric",
+    }),
+    c1,
+    y
+  );
+
+  doc.text(
+    `₹${Number(r.premium).toLocaleString()}`,
+    c2,
+    y
+  );
+
+  doc.text(
+    `₹${paid.toLocaleString()}`,
+    c3,
+    y
+  );
+
+  doc.text(
+    `₹${pending.toLocaleString()}`,
+    c4,
+    y
+  );
+
+  doc.text(
+    `₹${runningDue.toLocaleString()}`,
+    c5,
+    y
+  );
+
+  y += 22;
+});
 
     doc.end();
   } catch (err) {
