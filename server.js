@@ -335,37 +335,26 @@ let rows = Object.values(ledger).sort(
 
 let previousBalance = 0;
 
-rows = rows.map((r) => {
-  let available =
-  Number(previousBalance || 0) +
-  Number(r.paid || 0) +
-  Number(r.autoPaid || 0);
+rows = rows.map((r) => ({
+  ...r,
 
-  const balance =
-    available - r.premium;
+  actualPaid:
+    r.balance >= 0
+      ? r.premium
+      : r.premium - Math.abs(r.balance),
 
-  const pending =
-    balance < 0
-      ? Math.abs(balance)
-      : 0;
+  pending:
+    r.carry > 0
+      ? 0
+      : Math.max(
+          Math.abs(
+            Math.min(r.balance || 0, 0)
+          ),
+          0
+        ),
 
-  const credit =
-    balance > 0
-      ? balance
-      : 0;
-
-  previousBalance = credit;
-
-  return {
-    ...r,
-    actualPaid:
-      pending === 0
-        ? r.premium
-        : available,
-    pending,
-    credit,
-  };
-});
+  credit: r.carry || 0,
+}));
 
     if (from) rows = rows.filter((r) => r.date >= new Date(from));
     if (to) rows = rows.filter((r) => r.date <= new Date(to));
@@ -390,19 +379,19 @@ rows = rows.map((r) => {
     doc.moveDown();
 
     doc.font("Helvetica-Bold");
-    const c1 = 40;
-const c2 = 180;
-const c3 = 280;
-const c4 = 380;
-const c5 = 480;
+   const c1 = 40;
+const c2 = 140;
+const c3 = 220;
+const c4 = 300;
+const c5 = 380;
+const c6 = 460;
 
-let y = doc.y;
-
-doc.text("Month", c1, y);
-doc.text("Premium", c2, y);
-doc.text("Paid", c3, y);
-doc.text("Pending", c4, y);
-doc.text("Running Due", c5, y);
+doc.text("Month", c1, doc.y);
+doc.text("Premium", c2, doc.y);
+doc.text("Paid", c3, doc.y);
+doc.text("Credit", c4, doc.y);
+doc.text("Pending", c5, doc.y);
+doc.text("Running Due", c6, doc.y);
 
 y += 20;
 
@@ -413,6 +402,12 @@ doc.moveTo(40, y - 5)
 doc.font("Helvetica");
 
    let runningDue = 0;
+
+if (pending > 0) {
+  runningDue += pending;
+} else {
+  runningDue = 0;
+}
 
 rows.forEach((r) => {
   const paid = Number(r.actualPaid || 0);
