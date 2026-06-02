@@ -367,31 +367,23 @@ rows = rows.map((r) => ({
     doc.pipe(res);
 
     doc.fontSize(16).text("SRI SAI BANGARAMMA", { align: "center" });
-    doc.fontSize(12).text("LEDGER STATEMENT", { align: "center" });
-    doc.moveDown();
-
-    doc.fontSize(10);
-    doc.text(`Member : ${member.personName}`);
-    doc.text(`Group  : ${member.groupName}`);
-    doc.text(`Mobile : ${member.personMobile}`);
-    doc.text(`Premium: ₹${member.personPremium}`);
-    doc.text(`Date   : ${new Date().toLocaleDateString()}`);
-    doc.moveDown();
-
     doc.font("Helvetica-Bold");
-   const c1 = 40;
+
+const c1 = 40;
 const c2 = 140;
 const c3 = 220;
 const c4 = 300;
 const c5 = 380;
 const c6 = 460;
 
-doc.text("Month", c1, doc.y);
-doc.text("Premium", c2, doc.y);
-doc.text("Paid", c3, doc.y);
-doc.text("Credit", c4, doc.y);
-doc.text("Pending", c5, doc.y);
-doc.text("Running Due", c6, doc.y);
+let y = doc.y;
+
+doc.text("Month", c1, y);
+doc.text("Premium", c2, y);
+doc.text("Paid", c3, y);
+doc.text("Credit", c4, y);
+doc.text("Pending", c5, y);
+doc.text("Running Due", c6, y);
 
 y += 20;
 
@@ -401,13 +393,60 @@ doc.moveTo(40, y - 5)
 
 doc.font("Helvetica");
 
-   let runningDue = 0;
+let runningDue = 0;
 
-if (pending > 0) {
-  runningDue += pending;
-} else {
-  runningDue = 0;
-}
+rows.forEach((r) => {
+  const paid = Number(r.actualPaid || 0);
+  const credit = Number(r.credit || 0);
+  const pending = Number(r.pending || 0);
+
+  if (pending > 0) {
+    runningDue += pending;
+  } else {
+    runningDue = 0;
+  }
+
+  doc.text(
+    r.date.toLocaleString("default", {
+      month: "short",
+      year: "numeric",
+    }),
+    c1,
+    y
+  );
+
+  doc.text(
+    `₹${Number(r.premium).toLocaleString()}`,
+    c2,
+    y
+  );
+
+  doc.text(
+    `₹${paid.toLocaleString()}`,
+    c3,
+    y
+  );
+
+  doc.text(
+    `₹${credit.toLocaleString()}`,
+    c4,
+    y
+  );
+
+  doc.text(
+    `₹${pending.toLocaleString()}`,
+    c5,
+    y
+  );
+
+  doc.text(
+    `₹${runningDue.toLocaleString()}`,
+    c6,
+    y
+  );
+
+  y += 22;
+});
 
 rows.forEach((r) => {
   const paid = Number(r.actualPaid || 0);
