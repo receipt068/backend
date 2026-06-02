@@ -374,7 +374,7 @@ const c2 = 140;
 const c3 = 220;
 const c4 = 300;
 const c5 = 380;
-const c6 = 460;
+
 
 let y = doc.y;
 
@@ -383,7 +383,7 @@ doc.text("Premium", c2, y);
 doc.text("Paid", c3, y);
 doc.text("Credit", c4, y);
 doc.text("Pending", c5, y);
-doc.text("Running Due", c6, y);
+
 
 y += 20;
 
@@ -439,68 +439,12 @@ rows.forEach((r) => {
     y
   );
 
-  doc.text(
-    `₹${runningDue.toLocaleString()}`,
-    c6,
-    y
-  );
+  
 
   y += 22;
 });
 
-rows.forEach((r) => {
-  const paid = Number(r.actualPaid || 0);
-  const pending = Number(r.pending || 0);
 
-  runningDue += pending;
-
-  if (y > 740) {
-    doc.addPage();
-    y = 50;
-  }
-
-  doc.text(
-    r.date.toLocaleString("default", {
-      month: "short",
-      year: "numeric",
-    }),
-    c1,
-    y
-  );
-
-  doc.text(
-    `₹${Number(r.premium).toLocaleString()}`,
-    c2,
-    y
-  );
-
-  doc.text(
-    `₹${paid.toLocaleString()}`,
-    c3,
-    y
-  );
-
-  doc.text(
-    `₹${pending.toLocaleString()}`,
-    c4,
-    y
-  );
-
-  doc.text(
-    `₹${runningDue.toLocaleString()}`,
-    c5,
-    y
-  );
-
-  y += 22;
-});
-
-    doc.end();
-  } catch (err) {
-    console.error("Ledger PDF error:", err);
-    res.status(500).send("Ledger PDF failed");
-  }
-});
 
 
 
