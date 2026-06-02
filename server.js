@@ -343,15 +343,7 @@ rows = rows.map((r) => ({
       ? r.premium
       : r.premium - Math.abs(r.balance),
 
-  pending:
-    r.carry > 0
-      ? 0
-      : Math.max(
-          Math.abs(
-            Math.min(r.balance || 0, 0)
-          ),
-          0
-        ),
+  pending: 0,
 
   credit: r.carry || 0,
 }));
