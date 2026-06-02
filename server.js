@@ -367,6 +367,14 @@ rows = rows.map((r) => ({
     doc.pipe(res);
 
     doc.fontSize(16).text("SRI SAI BANGARAMMA", { align: "center" });
+    doc.fontSize(12).text("LEDGER STATEMENT", { align: "center" });
+doc.moveDown();
+
+doc.fontSize(10);
+doc.text(`Member : ${member.personName}`);
+doc.text(`Group  : ${member.groupName}`);
+doc.text(`Mobile : ${member.personMobile}`);
+doc.text(`Premium: ₹${member.personPremium}`);
     doc.font("Helvetica-Bold");
 
 const c1 = 40;
@@ -443,7 +451,13 @@ rows.forEach((r) => {
 
   y += 22;
 });
+doc.end();
 
+} catch (err) {
+  console.error("Ledger PDF error:", err);
+  res.status(500).send("Ledger PDF failed");
+}
+});
 
 
 
