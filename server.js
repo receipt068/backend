@@ -135,7 +135,153 @@ app.get("/auctions/:group", async (req, res) => {
 
 /* ================= LEDGER PDF ================= */
 
+function buildMonthWiseLedger({
+  payments,
+  auctions,
+  member,
+}) {
+  const ledger = {};
 
+  const keyOf = (y, m) => `${y}-${m}`;
+
+  /* 1. REGISTER AUCTION MONTHS */
+  auctions.forEach((a) => {
+    const d = new Date(a.auctionDate);
+
+    const key = keyOf(
+      d.getFullYear(),
+      d.getMonth()
+    );
+
+    ledger[key] = {
+      date: new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        1
+      ),
+
+      premium: Number(
+        a.perPersonFinal || 0
+      ),
+
+      winnerName:
+        a.memberName?.trim() || null,
+
+      paid: 0,
+      autoPaid: 0,
+      adjustedFromPrev: 0,
+      balance: 0,
+      carry: 0,
+    };
+  });
+
+  /* 2. APPLY PAYMENTS MONTH-WISE */
+  payments.forEach((p) => {
+    const d = p.date;
+
+    const key = keyOf(
+      d.getFullYear(),
+      d.getMonth()
+    );
+
+    if (!ledger[key]) {
+      ledger[key] = {
+        date: new Date(
+          d.getFullYear(),
+          d.getMonth(),
+          1
+        ),
+
+        premium: 0,
+        winnerName: null,
+
+        paid: 0,
+        autoPaid: 0,
+        adjustedFromPrev: 0,
+
+        balance: 0,
+        carry: 0,
+      };
+    }
+
+    ledger[key].paid += Number(
+      p.amount || 0
+    );
+  });
+
+  /* 3. SORT MONTHS */
+  const keys = Object.keys(ledger).sort(
+    (a, b) => {
+      const [ay, am] = a
+        .split("-")
+        .map(Number);
+
+      const [by, bm] = b
+        .split("-")
+        .map(Number);
+
+      return (
+        new Date(ay, am) -
+        new Date(by, bm)
+      );
+    }
+  );
+
+  /* 4. FIFO */
+  let previousBalance = 0;
+
+  keys.forEach((key) => {
+    const m = ledger[key];
+
+    const isWinner =
+      m.winnerName &&
+      member?.personName &&
+      m.winnerName.trim() ===
+        member.personName.trim();
+
+    m.autoPaid = isWinner
+      ? m.premium
+      : 0;
+
+    let available =
+      (m.paid || 0) +
+      (m.autoPaid || 0);
+
+    if (previousBalance < 0) {
+      const adjust = Math.min(
+        available,
+        Math.abs(previousBalance)
+      );
+
+      m.adjustedFromPrev = adjust;
+
+      available -= adjust;
+
+      previousBalance += adjust;
+    }
+
+    const availableWithCarry =
+      available +
+      Math.max(previousBalance, 0);
+
+    m.balance =
+      availableWithCarry -
+      (m.premium || 0);
+
+    const finalBalance =
+      m.balance;
+
+    m.carry =
+      finalBalance > 0
+        ? finalBalance
+        : 0;
+
+    previousBalance =
+      finalBalance;
+  });
+
+  return ledger;
+}
 app.get("/ledger-pdf-v2/:mobile", async (req, res) => {
   try {
     const { from, to } = req.query;
