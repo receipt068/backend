@@ -324,6 +324,10 @@ const ledger = buildMonthWiseLedger({
   auctions,
   member,
 });
+    console.log(
+  "PDF LEDGER",
+  JSON.stringify(ledger, null, 2)
+);
 
 let rows = Object.values(ledger).sort(
   (a, b) => a.date - b.date
